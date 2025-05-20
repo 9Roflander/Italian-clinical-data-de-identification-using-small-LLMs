@@ -75,3 +75,14 @@ output_report.md
 outputs/
 
 
+#data
+data/
+
+#output files
+*.csv
+*.txt
+*.json
+*.jsonl
+*.jsonl.gz
+*.jsonl.gz.part
+*.jsonl.gz.part.

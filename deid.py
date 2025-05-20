@@ -48,6 +48,19 @@ except ImportError:
     VLLM_AVAILABLE = False
     logger.warning("VLLM not available. Install with: pip install vllm")
 
+
+'''
+GDPR sensitive info according to usercentrics.com/resources/gdpr-checlist
+
+names, addresses, phone numbers, and email addresses
+identification numbers like Social Security, passport, or driver’s license numbers
+location data such as GPS coordinates or IP addresses
+biometric data like fingerprints, facial recognition, or DNA
+genetic data
+health-related or healthcare information
+political opinions, religious beliefs, or membership in trade unions
+'''
+
 # GDPR sensitive data categories to be de-identified
 GDPR_CATEGORIES = [
     "Nome e cognome del paziente",
