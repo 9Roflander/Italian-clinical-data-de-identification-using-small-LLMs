@@ -57,6 +57,7 @@ GDPR_CATEGORIES = [
     "Numeri di previdenza sociale",
     "Nome dell'ospedale o struttura sanitaria specifica",
     "Località geografiche specifiche",
+    "Provenienza geografica specifica",
     "Qualsiasi altro dato che potrebbe identificare il paziente in modo univoco, da soli o in combinazione con altri dati"
 ]
 
@@ -118,24 +119,31 @@ Ti fornirò una nota clinica e tu dovrai identificare tutte le informazioni pers
 ISTRUZIONI IMPORTANTI:
 1. Per ogni informazione personale identificata, indica:
    a) Il tipo di informazione (es. "NOME", "DATA_NASCITA", "CODICE_FISCALE", "INDIRIZZO", ecc.)
-   b) Il testo esatto dell'informazione 
-   c) La posizione di inizio e fine dell'informazione nel testo (indice di carattere)
+   b) Il testo esatto dell'informazione
 
 2. Restituisci le annotazioni in formato JSON come segue:
    {{
      "annotations": [
-       {{ "type": "NOME", "text": "Mario Rossi", "start": 12, "end": 23 }},
-       {{ "type": "DATA_NASCITA", "text": "15/06/1965", "start": 34, "end": 44 }},
+       {{ "type": "NOME", "text": "Mario Rossi"}},
+       {{ "type": "DATA_NASCITA", "text": "15/06/1965"}},
+       {{ "type": "CODICE_FISCALE", "text": "RSSMRA65H01A000A"}},
+       {{ "type": "INDIRIZZO", "text": "Via Roma 123, Milano"}},
+       {{ "type": "ETÀ", "text": "65"}},
+       {{ "type": "NUMERO_DI_TESSERA_SANITARIA", "text": "1234567890"}},
+       {{ "type": "NUMERO_DI_CARTA_CLINICA", "text": "1234567890"}},
+       {{ "type": "NUMERO_DI_TELEFONO", "text": "3331234567"}},
+       {{ "type": "INDIRIZZO_EMAIL", "text": "mario.rossi@example.com"}},
        ...
      ]
    }}
 
 3. Sii estremamente preciso nell'identificare tutte le informazioni personali.
-4. Non annotare dati relativi a misurazioni di valori clinici o dosaggi di farmaci.
-5. Non annotare date ed esiti di ricoveri e procedure mediche.
-6. La posizione (start, end) deve riferirsi esattamente all'indice di carattere nel testo originale.
-7. Classifica correttamente il tipo di informazione personale utilizzando etichette brevi e descrittive.
-8. Tieni presente che queste annotazioni sono utilizzate per la deidentificazione delle note cliniche, quindi assicurati di non annotare dati che sono necessari per delineare il quadro clinico, altrimenti verranno rimossi.
+4. Non annotare dati relativi a misurazioni di valori clinici (come pressione, temperatura, battiti, glicemia, ecc.) o dosaggi di farmaci. Puoi aiutarti pensando che ogni informazione di questo tipo è accompagnata da un'unità di misura.
+5. Non annotare dati relativi a qualsiasi misurazione.
+6. Non annotare date ed esiti di ricoveri e procedure mediche.
+7. La posizione (start, end) deve riferirsi esattamente all'indice di carattere nel testo originale.
+8. Classifica correttamente il tipo di informazione personale utilizzando etichette brevi e descrittive.
+9. Tieni presente che queste annotazioni sono utilizzate per la deidentificazione delle note cliniche, quindi assicurati di non annotare dati che sono necessari per delineare il quadro clinico, altrimenti verranno rimossi.
  
 NOTA CLINICA:
 {text}

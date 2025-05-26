@@ -66,6 +66,9 @@ GDPR_CATEGORIES = [
     "Nome e cognome del paziente",
     "Data di nascita completa",
     "Codice fiscale",
+    "Età",
+    "Luogo di nascita",
+    "Provenienza geografica",
     "Numeri di tessera sanitaria",
     "Numeri di cartella clinica",
     "Numeri di telefono",
@@ -158,7 +161,7 @@ Ti fornirò una nota clinica e tu dovrai identificare e sostituire tutte le segu
 {categories_str}
 
 ISTRUZIONI IMPORTANTI:
-1. Sostituisci tutte le informazioni sensibili con i tag appropriati come [NOME], [COGNOME], [DATA], [INDIRIZZO], [ID], ecc.
+1. Sostituisci tutte le informazioni sensibili con i tag appropriati come [NOME], [COGNOME], [ETÀ], [DATA], [INDIRIZZO], [ID], ecc.
 2. Non modificare nulla all'infuori delle informazioni sensibili.
 3. Non rimuovere o modificare informazioni mediche rilevanti come diagnosi, trattamenti, dosaggi, ecc.
 4. Se un'informazione potrebbe essere identificativa ma non sei sicuro, mascherala comunque.
@@ -392,7 +395,7 @@ def main():
     parser.add_argument("--model", default="llama3", help="Model name to use for de-identification")
     parser.add_argument("--backend", choices=["ollama", "vllm"], default="ollama", 
                         help="Backend to use for model inference")
-    parser.add_argument("--format", choices=["txt", "csv"], default="txt",
+    parser.add_argument("--format", choices=["txt", "csv"], default="csv",
                         help="Format of the input file (txt = one note per paragraph, csv = one note per row)")
     parser.add_argument("--clean_output", action="store_true", default=False,
                         help="Clean the output of the model")
@@ -402,6 +405,8 @@ def main():
                        help="Include the prompt in the output JSONL file (useful for debugging)")
     parser.add_argument("--temperature", type=float, default=0.7,
                        help="Temperature for text generation (default: 0.1, higher = more creative, lower = more deterministic)")
+    parser.add_argument("--test_length", type=int, default=None,
+                       help="Number of notes to process (default: None, process all notes)")
     
     
     args = parser.parse_args()
@@ -463,6 +468,9 @@ def main():
                 if row and row[0].strip():
                     notes.append(row[0])
     
+    if args.test_length:
+        notes = notes[:args.test_length]
+
     # Process the notes
     processed, failed = process_clinical_notes(
         notes, 
