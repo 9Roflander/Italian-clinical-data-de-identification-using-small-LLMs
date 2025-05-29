@@ -5,36 +5,83 @@ import ollama
 from tqdm import tqdm
 import argparse
 from pydantic import BaseModel
+import os
+#choose GPUs
+os.environ["CUDA_VISIBLE_DEVICES"] = "5,6"
+
+class Annotation(BaseModel):
+    text: str
+    type: str
+
+class AnnotationDeidentified(BaseModel):
+    text: str
+    type: str
+    counted_as: str  # Must be one of "TP", "FN", "FP"
+
+class EvaluationResult(BaseModel):
+    report_id: str
+    annotations_gold: list[Annotation]
+    annotations_deidentified: list[AnnotationDeidentified]
+
 evaluation_prompt = """
 Ti fornirò:
  • Il testo originale di un referto medico (testo_originale)
  • La sua versione anonimizzata (testo_anonimizzato)
  • Una lista di entità sensibili annotate manualmente (entità_gold)
 
+Le possibili categorie sono:
+- NOME
+- ETÀ
+- LUOGO/INDIRIZZO
+- DATA
+
 Il tuo compito è confrontare le entità del gold standard con quelle effettivamente anonimizzate nel testo.
 
 Per ciascuna entità del gold, verifica:
- • Se è stata correttamente anonimizzata: mettila in true_positives
- • Se è presente nel testo anonimizzato senza essere oscurata: mettila in false_negatives
- • Se è stata anonimizzata ma non era presente nel gold: mettila in false_positives
+ • Se è stata correttamente anonimizzata, il testo dell'entità gold è stato sostituito con il tag corrispondente alla categoria: mettila in annotations_deidentified con counted_as: "TP"
+ ESEMPIO:
+ • Entità gold: "Mario Rossi"
+ • Entità deidentified: "[NOME]"
+ • Output: "Mario Rossi", "NOME", "TP"
+ 
+ • Se non è stata correttamente anonimizzata, il testo dell'entità gold è rimasto invariato: mettila in annotations_deidentified con counted_as: "FN"
+ ESEMPIO:
+ • Entità gold: "Mario Rossi"
+ • Entità deidentified: "Mario Rossi"
+ • Output: "Mario Rossi", "NOME", "FN"
+ 
+È possibile che compaiano entità anonimizzate che non sono presenti nel gold standard. Questo vuol dire che è stato anonimizzato un testo che non conteneva entità sensibili. In questo caso, mettila in annotations_deidentified con counted_as: "FP"
+ESEMPIO:
+ • Entità deidentified: "[NOME]"
+ • Output: "[NOME]", "NOME", "FP"
 
-Restituisci esclusivamente un oggetto JSON valido senza andare a capo, verrà dato in pasto al metodo json.loads():
- • referto_id
- • true_positives (lista di entità con text e type)
- • false_negatives (lista di entità con text e type)
- • false_positives (lista di entità con text e type)
+IMPORTANTE: Ogni elemento in annotations_deidentified DEVE avere esattamente questi campi:
+- text: il testo dell'entità
+- type: il tipo dell'entità
+- counted_as: deve essere esattamente "TP", "FN", o "FP"
 
+ATTENZIONE: 
+- Ogni output deve essere un JSON valido, verrà poi processato con json.loads().
+- Non aggiungere altro testo oltre al JSON, altrimenti verrà considerato un errore.
 
-
+ESEMPI:
+--NOME
 Esempio di output:
-{"report_id": "1", "annotations_gold": [{"text": "Mario Rossi", "type": "NOME"}, {"text": "25", "type": "ETÀ"}], "annotations_deidentified": [{"text": "Mario Rossi", "type": "NOME", "counted_as": "TP"}, {"text": "25", "type": "ETÀ", "counted_as": "FN"}, {"text": "via vai", "type": "LUOGO/INDIRIZZO", "counted_as": "FP"}]}
+{"report_id": "1", "annotations_gold": [{"text": "Mario Rossi", "type": "NOME"}, {"text": Giovanni Di Lorenzo, type: "NOME"}], "annotations_deidentified": [{"text": "Mario Rossi", "type": "NOME", "counted_as": "FN"}, {"text": [NOME], "type": "NOME", "counted_as": "TP"}, {"text": "[NOME]", "type": "NOME", "counted_as": "FP"}]}
+
+--ETÀ
+Esempio di output:
+{"report_id": "1", "annotations_gold": [{"text": "25", "type": "ETÀ"}, {"text": "30", "type": "ETÀ"}], "annotations_deidentified": [{"text": "25", "type": "ETÀ", "counted_as": "FN"}, {"text": "[ETÀ]", "type": "ETÀ", "counted_as": "TP"}, {"text": "[ETÀ]", "type": "ETÀ", "counted_as": "FP"}]}
+
+--LUOGO/INDIRIZZO
+Esempio di output:
+{"report_id": "1", "annotations_gold": [{"text": "Pakistan", "type": "LUOGO/INDIRIZZO"}, {"text": "Bologna", "type": "LUOGO/INDIRIZZO"}], "annotations_deidentified": [{"text": "[LUOGO/INDIRIZZO]", "type": "LUOGO/INDIRIZZO", "counted_as": "TP"}, {"text": "Bologna", "type": "LUOGO/INDIRIZZO", "counted_as": "FN"}, {"text": "[LUOGO/INDIRIZZO]", "type": "LUOGO/INDIRIZZO", "counted_as": "FP"}]}
+
+--DATA
+Esempio di output:
+{"report_id": "1", "annotations_gold": [{"text": "2021-01-01", "type": "DATA"}, {"text": "4 Maggio", "type": "DATA"}], "annotations_deidentified": [{"text": "2021-01-01", "type": "DATA", "counted_as": "FN"}, {"text": "[DATA]", "type": "DATA", "counted_as": "TP"}, {"text": "[DATA]", "type": "DATA", "counted_as": "FP"}]}
+
 """
-
-class EvaluationResult(BaseModel):
-    report_id: str
-    annotations_gold: list[dict]
-    annotations_deidentified: list[dict]
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default="gemma3:27b")
@@ -78,7 +125,7 @@ def evaluate_on_category(input_data,deidentified_data,annotations,category,test_
     for (input, deidentified, annotation) in tqdm(zip(input_data,deidentified_data,annotations)):
         #filter annotations by category
         annotations_category = [a for a in annotation if a["type"] == category]
-        
+        #breakpoint()
         #prompt the model to evaluate the deidentified data
         prompt = evaluation_prompt + f"TESTO ORIGINALE: {input}\nTESTO ANONIMIZZATO: {deidentified}\nENTITÀ GOLD: {annotations_category}"
         response = ollama.generate(model=args.model, prompt=prompt, format=EvaluationResult.model_json_schema())
@@ -88,7 +135,7 @@ def evaluate_on_category(input_data,deidentified_data,annotations,category,test_
     safe_category = category.replace("/", "_").replace("\\", "_")
     print(args.deidentified_data_path.split('/')[-1].split('_')[0])
     #breakpoint()
-    with open(f"outputs/{args.deidentified_data_path.split('/')[-1].split('.')[0]}_evaluatedBy{args.model}_{safe_category}.jsonl", "w") as f:
+    with open(f"outputs/{args.deidentified_data_path.split('/')[-1][:-5]}_evaluatedBy{args.model}_{safe_category}.jsonl", "w") as f:
         for result in results:
             try:
                 f.write(json.dumps(result) + "\n")

@@ -16,19 +16,26 @@ OUTPUT_DIR="outputs"
 METRICS_DIR="metrics"
 
 # Define list of models to use for de-identification
-#DEID_MODELS=("llama3.2:1b" "llama3.2:3b" "gemma3:1b" "gemma3:4b" "gemma3:12b" "gemma3:27b" "mistral:7b" "phi4:14b")
-DEID_MODELS=("gemma3:4b" "gemma3:12b")
+DEID_MODELS=("llama3.2:1b" "llama3.2:3b" "gemma3:1b" "gemma3:4b" "gemma3:12b" "gemma3:27b" "mistral:7b" "phi4:14b")
+DEID_MODELS=("gemma3:27b")
 # Define the judge models to use for evaluation
-JUDGE_MODELS=("gemma3:27b" "mistral-small:24b" "deepseek-r1:32b")
-
+#JUDGE_MODELS=("gemma3:27b" "mistral-small:24b" "deepseek-r1:32b")
+JUDGE_MODELS=("deepseek-r1:32b")
 # Define the categories for evaluation
-#CATEGORIES=("NOME" "ETÀ" "LUOGO/INDIRIZZO" "DATA")
-CATEGORIES=("ETÀ")
+CATEGORIES=("NOME" "ETÀ" "LUOGO/INDIRIZZO" "DATA")
+#CATEGORIES=("ETÀ" "NOME")
 # Step 1: Run de-identification with different models
 echo "=== Running de-identification with multiple models ==="
 for MODEL in "${DEID_MODELS[@]}"; do
+  # Check if deidentified file already exists
+  EXPECTED_OUTPUT="${OUTPUT_DIR}/${MODEL}_clean_output=False.jsonl"
+  if [ -f "$EXPECTED_OUTPUT" ]; then
+    echo "Skipping model $MODEL - output file already exists at: $EXPECTED_OUTPUT"
+    continue
+  fi
+  
   echo "Processing with model: $MODEL"
-  python deid.py --input "$INPUT_FILE" --output_dir "$OUTPUT_DIR" --model "$MODEL" --backend ollama --format csv --test_length 1  # --clean_output
+  python deid.py --input "$INPUT_FILE" --output_dir "$OUTPUT_DIR" --model "$MODEL" --backend ollama --format csv #--test_length 10  # --clean_output
 done
 
 # Step 2: Evaluate the de-identified output with different judge models

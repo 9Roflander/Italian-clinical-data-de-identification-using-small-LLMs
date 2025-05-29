@@ -33,6 +33,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("deid")
 
+#choose GPUs
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+
 # Try to import backends, gracefully handle missing dependencies
 try:
     import ollama
@@ -161,7 +164,7 @@ Ti fornirò una nota clinica e tu dovrai identificare e sostituire tutte le segu
 {categories_str}
 
 ISTRUZIONI IMPORTANTI:
-1. Sostituisci tutte le informazioni sensibili con i tag appropriati come [NOME], [COGNOME], [ETÀ], [DATA], [INDIRIZZO], [ID], ecc.
+1. Sostituisci tutte le informazioni sensibili con i tag appropriati come [NOME], [ETÀ], [DATA], [LUOGO/INDIRIZZO], ecc.
 2. Non modificare nulla all'infuori delle informazioni sensibili.
 3. Non rimuovere o modificare informazioni mediche rilevanti come diagnosi, trattamenti, dosaggi, ecc.
 4. Se un'informazione potrebbe essere identificativa ma non sei sicuro, mascherala comunque.

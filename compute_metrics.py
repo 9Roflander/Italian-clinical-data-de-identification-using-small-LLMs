@@ -7,6 +7,9 @@ import os
 import glob
 from collections import Counter
 
+
+#choose GPUs
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 def get_entity_key(entity):
     """
     Create a unique key for an entity based on its text and type.
@@ -26,7 +29,7 @@ def get_majority_vote(votes, threshold=0.5):
     """
     if not votes:
         return None
-    
+    #breakpoint()
     vote_counts = Counter(votes)
     total_votes = len(votes)
     
@@ -54,8 +57,13 @@ def aggregate_llm_judgments(eval_files):
     for eval_file in eval_files:
         jsonObj = pd.read_json(path_or_buf=eval_file, lines=True)
         data = []
+        #breakpoint()
         for sample in jsonObj[0]:
-            data.append(json.loads(sample))
+            try:
+                data.append(json.loads(sample))
+            except Exception as e:
+                print(f"Error loading JSON: {e}")
+                continue
             
         for record in data:
             report_id = record['report_id']
@@ -66,8 +74,12 @@ def aggregate_llm_judgments(eval_files):
             
             # Aggregate deidentified annotations
             for annotation in record.get('annotations_deidentified', []):
+                print(annotation)
                 entity_key = get_entity_key(annotation)
-                aggregated_judgments[report_id]['judgments'][entity_key].append(annotation['counted_as'])
+                if entity_key not in aggregated_judgments[report_id]:
+                    aggregated_judgments[report_id][entity_key] = []
+                
+                aggregated_judgments[report_id][entity_key].append(annotation['counted_as'])
     
     return aggregated_judgments
 
@@ -93,22 +105,24 @@ def compute_metrics_with_majority_voting(eval_files, majority_threshold=0.5):
     
     # Process each report's judgments
     for report_id, report_data in aggregated_judgments.items():
-        judgments = report_data['judgments']
+        
         
         # Process each entity's judgments
-        for entity_key, votes in judgments.items():
-            majority = get_majority_vote(votes, majority_threshold)
-            
-            if majority is None:
-                total_discarded += 1
-                continue
+        for entity_key, votes in report_data.items():
+            #breakpoint()
+            if entity_key != "gold_annotations":
+                majority = get_majority_vote(votes, majority_threshold)
                 
-            if majority == "TP":
-                total_tp += 1
-            elif majority == "FP":
-                total_fp += 1
-            elif majority == "FN":
-                total_fn += 1
+                if majority is None:
+                    total_discarded += 1
+                    continue
+                    
+                if majority == "TP":
+                    total_tp += 1
+                elif majority == "FP":
+                    total_fp += 1
+                elif majority == "FN":
+                    total_fn += 1
     
     # Calculate metrics
     precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0
@@ -189,7 +203,7 @@ def main():
     parser = argparse.ArgumentParser(description='Compute NER evaluation metrics from evaluation files')
     parser.add_argument('--outputs-dir', default='outputs', help='Directory containing evaluation files')
     parser.add_argument('--output-csv', default='metrics/combined_metrics.csv', help='Path to save combined metrics in CSV format')
-    parser.add_argument('--majority-threshold', type=float, default=0.5, help='Minimum proportion required for majority voting')
+    parser.add_argument('--majority-threshold', type=float, default=0.3, help='Minimum proportion required for majority voting')
     args = parser.parse_args()
     
     # Find all evaluation files
