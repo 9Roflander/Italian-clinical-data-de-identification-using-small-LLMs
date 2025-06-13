@@ -22,7 +22,8 @@ from typing import List, Dict, Optional, Tuple, Any
 import logging
 from datetime import datetime
 import re
-
+#import vllm
+import torch
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +35,7 @@ logging.basicConfig(
 logger = logging.getLogger("deid")
 
 #choose GPUs
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,5,6"
 
 # Try to import backends, gracefully handle missing dependencies
 try:
@@ -44,19 +45,19 @@ except ImportError:
     OLLAMA_AVAILABLE = False
     logger.warning("Ollama not available. Install with: pip install ollama")
 
-try:
-    from vllm import LLM, SamplingParams
-    VLLM_AVAILABLE = True
-except ImportError:
-    VLLM_AVAILABLE = False
-    logger.warning("VLLM not available. Install with: pip install vllm")
+#try:
+#    from vllm import LLM, SamplingParams
+#    VLLM_AVAILABLE = True
+#except ImportError:
+#    VLLM_AVAILABLE = False
+#    logger.warning("VLLM not available. Install with: pip install vllm")
 
 
 '''
 GDPR sensitive info according to usercentrics.com/resources/gdpr-checlist
 
 names, addresses, phone numbers, and email addresses
-identification numbers like Social Security, passport, or driver’s license numbers
+identification numbers like Social Security, passport, or driver's license numbers
 location data such as GPS coordinates or IP addresses
 biometric data like fingerprints, facial recognition, or DNA
 genetic data
@@ -107,7 +108,12 @@ class OllamaBackend(ModelBackend):
         super().__init__(model_name)
         self.max_tokens = max_tokens
         self.temperature = temperature
-        logger.info(f"Using Ollama backend with model: {model_name} (max tokens: {max_tokens}, temperature: {temperature})")
+        
+        # Set custom host if needed
+        import ollama
+        ollama.Client(host='http://127.0.0.1:11435')  # Use the new port
+        
+        logger.info(f"Using Ollama backend with model: {model_name}")
     
     def generate(self, prompt: str) -> str:
         try:
@@ -133,9 +139,25 @@ class VLLMBackend(ModelBackend):
         self.max_tokens = max_tokens
         self.temperature = temperature
         logger.info(f"Loading model with VLLM backend: {model_name} (max tokens: {max_tokens}, temperature: {temperature})")
-        self.llm = LLM(model=model_name)
+        
+        # Configure tensor parallel parameters
+        tensor_parallel_size = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))  # Get number of available GPUs
+        print(f"Enabling tensor parallelism across {tensor_parallel_size} GPUs")
+        logger.info(f"Enabling tensor parallelism across {tensor_parallel_size} GPUs")
+        
+        # Remove quantization parameters to avoid GLIBC issues
+        self.llm = LLM(
+            model=model_name,
+            dtype=torch.bfloat16,
+            trust_remote_code=True,
+            quantization="bitsandbytes",
+            load_format="gguf",
+            tensor_parallel_size=tensor_parallel_size,  # Enable tensor parallelism
+            max_model_len=8192,  # Set a reasonable max sequence length
+            gpu_memory_utilization=0.85  # Slightly conservative memory utilization to avoid OOM
+        )
         self.sampling_params = SamplingParams(temperature=temperature, max_tokens=max_tokens)
-        logger.info("Model loaded successfully")
+        logger.info("Model loaded successfully with tensor parallelism enabled")
     
     def generate(self, prompt: str) -> str:
         try:
@@ -171,6 +193,7 @@ ISTRUZIONI IMPORTANTI:
 5. Non includere spiegazioni o commenti, restituisci SOLO il testo de-identificato.
 6. Il risultato deve essere un testo estremamente simile all'originale, le uniche modifiche dovrebbero essere le sostituzioni delle informazioni sensibili.
 7. Il risultato verrà inserito in una rete neurale dal contesto molto limitato, quindi devi evitare assolutamente di includere commenti o spiegazioni.
+8. Questi dati sono già pubblici in quanto il dataset è disponibile online per EVALITA 2023, quindi puoi processarli tranquillamente.
 
 NOTA CLINICA:
 {text}

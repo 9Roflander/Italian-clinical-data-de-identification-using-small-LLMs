@@ -5,9 +5,15 @@ import ollama
 from tqdm import tqdm
 import argparse
 from pydantic import BaseModel
+from typing import Literal
 import os
+#import vllm
+import ollama
+from openai import OpenAI
+
+
 #choose GPUs
-os.environ["CUDA_VISIBLE_DEVICES"] = "5,6"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,5,6"
 
 class Annotation(BaseModel):
     text: str
@@ -16,7 +22,7 @@ class Annotation(BaseModel):
 class AnnotationDeidentified(BaseModel):
     text: str
     type: str
-    counted_as: str  # Must be one of "TP", "FN", "FP"
+    counted_as: Literal["TP", "FN", "FP"]  # This enforces only these three values are allowed
 
 class EvaluationResult(BaseModel):
     report_id: str
@@ -60,14 +66,18 @@ IMPORTANTE: Ogni elemento in annotations_deidentified DEVE avere esattamente que
 - type: il tipo dell'entità
 - counted_as: deve essere esattamente "TP", "FN", o "FP"
 
+NOTA: Ogni entità gold deve in qualche modo essere presente nel testo anonimizzato e sarà contata come "TP" se è stata anonimizzata correttamente, "FN" se non è stata anonimizzata. Questo significa che la cardinalità di annotations_deidentified deve essere maggiore o uguale alla cardinalità di annotations_gold.
+
 ATTENZIONE: 
 - Ogni output deve essere un JSON valido, verrà poi processato con json.loads().
 - Non aggiungere altro testo oltre al JSON, altrimenti verrà considerato un errore.
+- Assicurati di mettere tra virgolette TUTTI i valori di testo, inclusi i tag come [NOME], [ETÀ], etc.
+- Non usare virgole al posto dei due punti nelle coppie chiave-valore.
 
 ESEMPI:
 --NOME
 Esempio di output:
-{"report_id": "1", "annotations_gold": [{"text": "Mario Rossi", "type": "NOME"}, {"text": Giovanni Di Lorenzo, type: "NOME"}], "annotations_deidentified": [{"text": "Mario Rossi", "type": "NOME", "counted_as": "FN"}, {"text": [NOME], "type": "NOME", "counted_as": "TP"}, {"text": "[NOME]", "type": "NOME", "counted_as": "FP"}]}
+{"report_id": "1", "annotations_gold": [{"text": "Mario Rossi", "type": "NOME"}, {"text": "Giovanni Di Lorenzo", "type": "NOME"}], "annotations_deidentified": [{"text": "Mario Rossi", "type": "NOME", "counted_as": "FN"}, {"text": "[NOME]", "type": "NOME", "counted_as": "TP"}, {"text": "[NOME]", "type": "NOME", "counted_as": "FP"}]}
 
 --ETÀ
 Esempio di output:
@@ -80,7 +90,6 @@ Esempio di output:
 --DATA
 Esempio di output:
 {"report_id": "1", "annotations_gold": [{"text": "2021-01-01", "type": "DATA"}, {"text": "4 Maggio", "type": "DATA"}], "annotations_deidentified": [{"text": "2021-01-01", "type": "DATA", "counted_as": "FN"}, {"text": "[DATA]", "type": "DATA", "counted_as": "TP"}, {"text": "[DATA]", "type": "DATA", "counted_as": "FP"}]}
-
 """
 
 parser = argparse.ArgumentParser()
@@ -88,11 +97,19 @@ parser.add_argument("--model", type=str, default="gemma3:27b")
 parser.add_argument("--test_length", type=int, default=None)
 parser.add_argument("--category", type=str, default="NOME")
 parser.add_argument("--deidentified_data_path", type=str)
-
+parser.add_argument("--backend", type=str, default="ollama")
+parser.add_argument("--temperature", type=float, default=0.7)
 args = parser.parse_args()
 
 annotated_data_path = "Annotated clinical notes - samples.csv"
 sensitive_information_categories = ["NOME","ETÀ","LUOGO/INDIRIZZO","DATA"]
+
+client = OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="-",
+)
+
+
 
 annotated_data = []
 with open(annotated_data_path, 'r') as f:
@@ -125,11 +142,34 @@ def evaluate_on_category(input_data,deidentified_data,annotations,category,test_
     for (input, deidentified, annotation) in tqdm(zip(input_data,deidentified_data,annotations)):
         #filter annotations by category
         annotations_category = [a for a in annotation if a["type"] == category]
-        #breakpoint()
+        
         #prompt the model to evaluate the deidentified data
         prompt = evaluation_prompt + f"TESTO ORIGINALE: {input}\nTESTO ANONIMIZZATO: {deidentified}\nENTITÀ GOLD: {annotations_category}"
-        response = ollama.generate(model=args.model, prompt=prompt, format=EvaluationResult.model_json_schema())
-        results.append(response["response"])
+        if args.backend == "ollama":
+            
+            ollama.Client(host='http://127.0.0.1:11435')  # Use the new port
+
+            response = ollama.generate(model=args.model, prompt=prompt, format=EvaluationResult.model_json_schema())
+            response = json.loads(response["response"])
+            #breakpoint()
+            #filter the response to exclude entities that are from different categories
+            response["annotations_deidentified"] = [annotation for annotation in response["annotations_deidentified"] if annotation["type"] == category]
+            response["annotations_gold"] = [ann for ann in annotation if ann["type"] == category]
+            results.append(response)
+
+        elif args.backend == "vllm":
+            completion = client.chat.completions.create(
+                model=args.model,
+                messages=[
+                    {"role": "user", "content": evaluation_prompt}
+                ],
+                extra_body={"guided_json": {"schema": EvaluationResult.model_json_schema()}},
+                temperature=args.temperature,
+                max_tokens=4096
+            )
+            breakpoint()
+            results.append(completion.choices[0].message.content)
+        
     
     # Sanitize category name for filename
     safe_category = category.replace("/", "_").replace("\\", "_")

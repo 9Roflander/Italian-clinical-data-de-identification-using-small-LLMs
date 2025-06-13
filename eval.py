@@ -282,6 +282,8 @@ def main():
     annotated_data = load_annotated_data(args.annotated)
     print(f"Loaded {len(annotated_data)} annotated documents")
     
+
+    #print([f for f in os.listdir(args.input_dir) if f.endswith('clean_output=False.jsonl')])
     # Find all model output files
     model_files = [f for f in os.listdir(args.input_dir) 
                   if f.endswith('_clean_output=False.jsonl') and 

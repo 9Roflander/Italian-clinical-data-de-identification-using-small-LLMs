@@ -1,6 +1,6 @@
 # Output files
 output.csv
-*.csv
+
 output_*.txt
 
 # Sample input files
@@ -79,10 +79,15 @@ outputs/
 data/
 
 #output files
-*.csv
+
 *.txt
 *.json
 *.jsonl
 *.jsonl.gz
 *.jsonl.gz.part
 *.jsonl.gz.part.
+
+#metrics
+metrics/
+
+*plot*
