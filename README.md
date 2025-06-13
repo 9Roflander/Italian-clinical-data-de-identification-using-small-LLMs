@@ -1,100 +1,121 @@
-# Named Entity Recognition and Deidentification Analysis for Italian Clinical Notes
+# Italian Clinical Note De-identification with LLMs
 
-This repository contains tools for performing Named Entity Recognition (NER) on Italian clinical notes and analyzing the deidentification process. The tools work with JSONL files containing both "input" (original) and "output" (deidentified) text fields.
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Installation](#installation)
-- [Tools and Scripts](#tools-and-scripts)
-  - [Basic NER](#1-basic-ner-nerpy)
-  - [Medical NER](#2-medical-ner-medical_nerpy)
-  - [Combined NER Analysis](#3-combined-ner-analysis-run_ner_analysispy)
-  - [Deidentification Report Generator](#4-deidentification-report-generator-generate_deidentification_reportpy)
-  - [Visualization Tools](#5-visualization-tools-visualize_deidentificationpy)
-  - [Dataset Annotation with Gemma 3 27B](#6-dataset-annotation-with-gemma-3-27b-annotatepy)
-- [Complete Workflow Example](#complete-workflow-example)
-- [Input Format](#input-format)
-- [Output Format](#output-format)
-- [Testing](#testing)
-- [Extending the Tools](#extending-the-tools)
+This repository contains a comprehensive toolkit for de-identifying Italian clinical notes using Large Language Models (LLMs) and evaluating the de-identification performance through both deterministic methods and LLM-based evaluation.
 
 ## Overview
 
-This toolkit provides a comprehensive solution for analyzing the effectiveness of deidentification in Italian clinical notes. It helps identify named entities in both original and deidentified text, determine which entities have been removed, and generate detailed reports and visualizations to assess the deidentification process.
+The project implements a GDPR-compliant de-identification system for Italian clinical notes using various LLMs. It includes:
 
-Key capabilities:
-- Identify standard named entities (people, locations, organizations) in Italian text
-- Recognize medical-specific terminology and measurements
-- Compare original and deidentified text to detect removed entities
-- Generate statistics on deidentification effectiveness
-- Visualize entity removal patterns
+1. **De-identification System**: Uses LLMs to identify and mask sensitive information in clinical notes
+2. **Evaluation Framework**: Two evaluation approaches:
+   - Deterministic evaluation based on exact matching
+   - LLM-as-a-judge evaluation for more nuanced assessment
+3. **Analysis Tools**: Comprehensive tools for analyzing and visualizing de-identification performance
 
 ## Installation
 
-Install all required dependencies:
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/Italian-Clinical-Note-Deidentification.git
+cd Italian-Clinical-Note-Deidentification
+```
 
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-The tools require a spaCy Italian language model:
-
+3. Set up Ollama (for local LLM inference):
 ```bash
-python -m spacy download it_core_news_lg
+# Follow instructions at https://ollama.ai to install Ollama
+# Pull required models:
+ollama pull gemma3:27b
+ollama pull mistral-small:24b
+ollama pull deepseek-r1:32b
 ```
 
-For smaller/faster processing, you can use the smaller model instead:
+## Usage
+
+### 1. De-identification
+
+The main de-identification script (`deid.py`) processes clinical notes using LLMs:
 
 ```bash
-python -m spacy download it_core_news_sm
+python deid.py --input input_notes.jsonl --output deidentified_notes.jsonl --model gemma3:27b --backend ollama
 ```
 
-## Tools and Scripts
+Key features:
+- Supports multiple LLM backends (Ollama, VLLM)
+- Configurable de-identification categories
+- Handles various sensitive information types (names, dates, locations, etc.)
+- Preserves medical information while removing PII
 
-### 1. Basic NER (`ner.py`)
+### 2. Evaluation
 
-This script performs standard Named Entity Recognition using spaCy's Italian language model and compares entities between original and deidentified text.
-
-**Features:**
-- Uses spaCy's Italian language model for general entity recognition
-- Identifies entities like people, organizations, locations, dates, etc.
-- Compares input and output entities to analyze deidentification patterns
-- Calculates deidentification statistics
-
-**Usage:**
+#### Deterministic Evaluation
 ```bash
-python ner.py input.jsonl [--output_file output_ner.jsonl] [--model it_core_news_lg]
+python eval.py --input deidentified_notes.jsonl --gold_standard annotated_data.jsonl
 ```
 
-### 2. Medical NER (`medical_ner.py`)
-
-This script enhances spaCy's general NER with specialized pattern matching for medical terminology in Italian.
-
-**Features:**
-- Specialized for medical terminology in Italian
-- Uses pattern matching and dictionaries to identify medical entities
-- Recognizes 8 types of medical entities:
-  - CONDITION: Diseases, disorders, symptoms (e.g., "diabete", "infarto")
-  - MEDICATION: Drugs, medications (e.g., "antibiotico", "insulina") 
-  - PROCEDURE: Medical procedures, surgeries (e.g., "intervento", "biopsia")
-  - TEST: Laboratory tests, diagnostics (e.g., "analisi", "radiografia")
-  - ANATOMY: Body parts, organs (e.g., "cuore", "fegato")
-  - MEASUREMENT: Measurements, test results (e.g., "120/80 mmHg", "5.4 mg/dL")
-  - DEVICE: Medical devices, equipment (e.g., "pacemaker", "catetere")
-  - TIME: Time expressions related to medical events (e.g., "cronico", "acuto")
-
-**Usage:**
+#### LLM-as-a-Judge Evaluation
 ```bash
-python medical_ner.py input.jsonl [--output_file output_med_ner.jsonl] [--model it_core_news_lg]
+python llm_as_a_judge.py --deidentified_data_path deidentified_notes.jsonl --model gemma3:27b --category NOME
 ```
 
-### 3. Combined NER Analysis (`run_ner_analysis.py`)
+The LLM-as-a-judge evaluation:
+- Evaluates de-identification quality using another LLM
+- Categorizes results as True Positives (TP), False Positives (FP), or False Negatives (FN)
+- Supports evaluation of specific categories (NOME, ETÀ, LUOGO/INDIRIZZO, DATA)
 
-This script runs both general and medical NER and combines the results into a single output file.
+### 3. Analysis and Visualization
 
-**Features:**
-- Runs both `ner.py` and `medical_ner.py` scripts sequentially
-- Combines entities from both scripts with intelligent merging
-- Handles entity overlaps with priority for longer matches and medical entities
-- Preserves o
+Generate performance metrics and visualizations:
+```bash
+python compute_metrics.py --input evaluation_results.jsonl
+python create_boxplot.py --input metrics/
+```
+
+## Data Format
+
+### Input Format (JSONL)
+```json
+{
+    "input": "Original clinical note text",
+    "output": "De-identified clinical note text"
+}
+```
+
+### Evaluation Results Format
+```json
+{
+    "report_id": "1",
+    "annotations_gold": [
+        {"text": "Mario Rossi", "type": "NOME"}
+    ],
+    "annotations_deidentified": [
+        {"text": "[NOME]", "type": "NOME", "counted_as": "TP"}
+    ]
+}
+```
+
+## Project Structure
+
+- `deid.py`: Main de-identification script
+- `llm_as_a_judge.py`: LLM-based evaluation system
+- `eval.py`: Deterministic evaluation script
+- `compute_metrics.py`: Performance metrics computation
+- `create_boxplot.py`: Visualization generation
+- `plots.py`: Additional visualization utilities
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+[Your License Here]
+
+## Citation
+
+If you use this code in your research, please cite:
+[Your Citation Information]

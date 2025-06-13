@@ -90,4 +90,6 @@ data/
 #metrics
 metrics/
 
+*.pdf
+
 *plot*
