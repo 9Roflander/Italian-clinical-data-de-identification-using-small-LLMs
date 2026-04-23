@@ -7,6 +7,7 @@ tqdm>=4.65.0
 matplotlib>=3.5.0
 numpy>=1.20.0
 ollama>=0.1.22
+anthropic>=0.34.0
 
 # Italian language model - install with:
 # python -m spacy download it_core_news_lg
