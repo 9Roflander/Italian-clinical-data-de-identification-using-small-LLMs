@@ -9,7 +9,8 @@ Key features implemented:
 - Prompt Caching with a >=2048 token cached system block
 - Exactly 20 permanent anchor records from gold_standard_80.json
 - Dynamic sampling of 3 records from the remaining 60 on each iteration
-- Offset calculation via original_text.find(entity['text'])
+- Regex boundary-safe offset calculation for entity alignment
+- Anti-poisoning validation for missing entity occurrences
 - Backup save every 10 generated records
 """
 
@@ -32,6 +33,7 @@ MIN_STATIC_TOKENS = 2048
 ANCHOR_COUNT = 20
 DYNAMIC_SAMPLE_COUNT = 3
 EXPECTED_GOLD_COUNT = 80
+ENTITY_BOUNDARY_CLASS = r"A-Za-z0-9À-ÖØ-öø-ÿ"
 
 
 logging.basicConfig(
@@ -61,6 +63,38 @@ REGOLE PER entities:
 """
 
 
+GDPR_MEDICAL_PADDING_IT = """La protezione dei dati sanitari richiede minimizzazione, proporzionalita e tracciabilita di ogni trattamento.
+Nel contesto clinico, il personale deve trattare solo le informazioni strettamente necessarie alla finalita assistenziale.
+Ogni riferimento a identita, recapiti o codici amministrativi va gestito con regole esplicite e verificabili.
+La documentazione medica deve mantenere chiarezza semantica, continuita narrativa e accuratezza terminologica.
+Anamnesi fisiologica, anamnesi patologica remota, terapia domiciliare e allergie devono essere coerenti.
+Durante il ricovero, i dati di reparto, datazione degli eventi e passaggi di consegna vanno annotati con rigore.
+Nella descrizione dell esame obiettivo, usare lessico clinico standard senza dettagli superflui identificativi.
+I referti di laboratorio, imaging e consulenze specialistiche vanno contestualizzati in modo comprensibile.
+Le diagnosi differenziali devono riflettere ipotesi plausibili e il decorso deve rispettare una timeline realistica.
+Le decisioni terapeutiche devono includere motivazione clinica, monitoraggio e indicatori di efficacia.
+La privacy by design impone che il dato personale sia separato dal dato clinico quando non indispensabile.
+In caso di scambio interdisciplinare, ogni professionista riceve solo il sottoinsieme informativo necessario.
+Le basi giuridiche del trattamento includono tutela della salute e adempimenti previsti dalla normativa vigente.
+La pseudonimizzazione riduce il rischio residuo ma non sostituisce controlli di sicurezza e audit periodici.
+Gli identificativi possono comparire in formati eterogenei e devono essere riconosciuti anche in contesti rumorosi.
+Nei testi clinici, la qualita linguistica influenza la qualita del dato e l affidabilita della fase di de-identificazione.
+I piani di dimissione devono includere follow up, istruzioni farmacologiche e segni di allarme per il paziente.
+Ogni registrazione deve essere leggibile, internamente consistente e priva di ambiguita nella sequenza temporale.
+La governance dei dati sanitari richiede responsabilita, formazione continua e aggiornamento delle procedure operative.
+Un dataset sintetico utile deve preservare realismo clinico e garantire controllo rigoroso sulle entita sensibili.
+Termini medici frequenti includono dolore toracico, dispnea, febbre, nausea, cefalea, edema e astenia.
+Ulteriori elementi plausibili: pressione arteriosa, frequenza cardiaca, saturazione, temperatura e diuresi.
+Nel diario clinico possono comparire diagnosi come polmonite, scompenso, fibrillazione atriale o diabete.
+La terapia puo contenere antibiotici, anticoagulanti, antipertensivi, analgesici e terapia insulinica.
+La continuita assistenziale richiede note ordinate tra accesso, osservazione, trattamento e rivalutazione.
+Ogni sezione deve mantenere tono professionale e strutturazione adatta al contesto ospedaliero italiano.
+La sicurezza informativa include controllo accessi, cifratura, registri eventi e principio del minimo privilegio.
+Le informazioni identificative non devono eccedere quanto necessario alla comprensione del caso clinico.
+La qualita del dataset dipende da controlli automatici, criteri ripetibili e scarto dei record incoerenti.
+In sintesi, accuratezza clinica e protezione del dato sono obiettivi complementari e non alternativi."""
+
+
 def approx_token_count(text: str) -> int:
     """Rough token estimate used to guarantee a long cacheable system block."""
     return len(re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE))
@@ -71,14 +105,9 @@ def ensure_minimum_tokens(text: str, min_tokens: int) -> str:
     if approx_token_count(text) >= min_tokens:
         return text
 
-    filler = (
-        "\nLinea guida aggiuntiva: mantieni coerenza interna tra storia clinica, "
-        "anamnesi, esame obiettivo, terapia e follow-up; usa sempre dati fittizi "
-        "coerenti e non riutilizzare dettagli letterali degli esempi ancora."
-    )
     padded = text
     while approx_token_count(padded) < min_tokens:
-        padded += filler
+        padded += "\n\nApprofondimento normativo e terminologico:\n" + GDPR_MEDICAL_PADDING_IT
     return padded
 
 
@@ -209,6 +238,10 @@ def normalize_text(value: Any) -> str:
 def canonical_type(raw_type: str) -> str:
     normalized = unicodedata.normalize("NFKD", raw_type.upper())
     normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.strip()
+
+    if not normalized:
+        raise ValueError("Tipo entita mancante o vuoto.")
 
     if any(key in normalized for key in ["NOME", "COGNOME", "PAZIENT", "MEDIC"]):
         return "NOME"
@@ -226,7 +259,7 @@ def canonical_type(raw_type: str) -> str:
         for key in ["ID", "CODICE", "CF", "TESSERA", "CARTELLA", "MATRICOLA", "NUMERO", "PLACEHOLDER_CF", "PLACEHOLDER_TEL", "PLACEHOLDER_ID"]
     ):
         return "ID"
-    return "ID"
+    raise ValueError(f"Tipo entita non riconosciuto: '{raw_type}'")
 
 
 def type_to_tag(entity_type: str) -> str:
@@ -237,7 +270,20 @@ def type_to_tag(entity_type: str) -> str:
         "LUOGO": "[LUOGO]",
         "ID": "[ID]",
     }
-    return mapping.get(entity_type, "[ID]")
+    if entity_type not in mapping:
+        raise ValueError(f"Tipo entita non supportato per redazione: '{entity_type}'")
+    return mapping[entity_type]
+
+
+def build_entity_match_pattern(entity_text: str) -> str:
+    escaped_text = re.escape(entity_text)
+    # Enforce token-like boundaries to avoid substring matches (e.g. Franco in Francofonte).
+    return rf"(?<![{ENTITY_BOUNDARY_CLASS}]){escaped_text}(?![{ENTITY_BOUNDARY_CLASS}])"
+
+
+def count_entity_occurrences(text: str, entity_text: str) -> int:
+    pattern = build_entity_match_pattern(entity_text)
+    return len(list(re.finditer(pattern, text)))
 
 
 def find_non_overlapping_span(
@@ -245,16 +291,37 @@ def find_non_overlapping_span(
     needle: str,
     occupied_spans: List[Tuple[int, int]],
 ) -> Tuple[int, int]:
-    # Requirement-specific strategy: span detection based on str.find.
-    start = text.find(needle)
-    while start != -1:
-        end = start + len(needle)
+    pattern = build_entity_match_pattern(needle)
+    for match in re.finditer(pattern, text):
+        start = match.start()
+        end = match.end()
         overlaps = any(not (end <= s or start >= e) for s, e in occupied_spans)
         if not overlaps:
             occupied_spans.append((start, end))
             return start, end
-        start = text.find(needle, start + 1)
     raise ValueError(f"Entità non trovata in original_text: '{needle}'")
+
+
+def validate_entity_coverage(original_text: str, raw_entities: Any) -> None:
+    if not isinstance(raw_entities, list):
+        raise ValueError("Il campo entities deve essere una lista.")
+
+    counts_in_json: Dict[str, int] = {}
+    for item in raw_entities:
+        if not isinstance(item, dict):
+            continue
+        entity_text = normalize_text(item.get("text"))
+        if not entity_text:
+            continue
+        counts_in_json[entity_text] = counts_in_json.get(entity_text, 0) + 1
+
+    for entity_text, json_count in counts_in_json.items():
+        text_count = count_entity_occurrences(original_text, entity_text)
+        if text_count != json_count:
+            raise ValueError(
+                "Copertura entities non valida: "
+                f"'{entity_text}' appare {text_count} volte nel testo ma {json_count} volte in entities."
+            )
 
 
 def enrich_entities_with_offsets(
@@ -312,6 +379,8 @@ def validate_and_normalize_record(obj: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("original_text mancante o vuoto.")
     if re.search(r"\[(?:NOME|ETÀ|DATA|LUOGO|ID)\]", original_text):
         raise ValueError("original_text contiene tag redazionali: risposta non valida.")
+
+    validate_entity_coverage(original_text, obj.get("entities", []))
 
     entities = enrich_entities_with_offsets(original_text, obj.get("entities", []))
     if not entities:
@@ -380,8 +449,8 @@ def generate_dataset(
             try:
                 dynamic_examples = rng.sample(dynamic_pool, DYNAMIC_SAMPLE_COUNT)
                 user_prompt = build_dynamic_user_prompt(i, dynamic_examples)
-                if i % 2 == 0:
-                    user_prompt += " Inserisci obbligatoriamente [PLACEHOLDER_CF] e [PLACEHOLDER_TEL] nel testo."
+                if rng.random() < 0.15:
+                    user_prompt += " OBBLIGATORIO: Inserisci [PLACEHOLDER_CF] e [PLACEHOLDER_TEL] nel testo."
 
                 response = create_with_prompt_caching(
                     client,

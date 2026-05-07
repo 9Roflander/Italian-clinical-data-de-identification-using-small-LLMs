@@ -24,7 +24,7 @@ from google.genai import types as genai_types
 
 MODEL_NAME = "gemini-2.5-flash"
 TEMPERATURE = 0.8
-MIN_ENTITIES_PER_RECORD = 3
+MIN_ENTITIES_PER_RECORD = 8
 
 # Placeholders the LLM must emit verbatim. Order matters for prompt readability only.
 PLACEHOLDERS: Tuple[str, ...] = (
@@ -34,6 +34,10 @@ PLACEHOLDERS: Tuple[str, ...] = (
     "[LUOGO_RESIDENZA]",
     "[CF]",
     "[TELEFONO]",
+    "[MEDICO_NOME]",
+    "[MEDICO_COGNOME]",
+    "[PARENTE_NOME]",
+    "[DATA_VISITA]",
 )
 
 PLACEHOLDER_TO_TYPE: Dict[str, str] = {
@@ -43,6 +47,10 @@ PLACEHOLDER_TO_TYPE: Dict[str, str] = {
     "[LUOGO_RESIDENZA]": "LUOGO",
     "[CF]": "ID",
     "[TELEFONO]": "ID",
+    "[MEDICO_NOME]": "NOME",
+    "[MEDICO_COGNOME]": "NOME",
+    "[PARENTE_NOME]": "NOME",
+    "[DATA_VISITA]": "DATA",
 }
 
 TYPE_TO_TAG: Dict[str, str] = {
@@ -54,7 +62,7 @@ TYPE_TO_TAG: Dict[str, str] = {
 }
 
 PLACEHOLDER_PATTERN = re.compile(
-    r"\[(?:PAZIENTE_NOME|PAZIENTE_COGNOME|DATA_NASCITA|LUOGO_RESIDENZA|CF|TELEFONO)\]"
+    r"\[(?:PAZIENTE_NOME|PAZIENTE_COGNOME|DATA_NASCITA|LUOGO_RESIDENZA|CF|TELEFONO|MEDICO_NOME|MEDICO_COGNOME|PARENTE_NOME|DATA_VISITA)\]"
 )
 
 # Light topic variation to fight LLM repetition without leaking anchor records.
@@ -76,28 +84,22 @@ NOTE_TYPES_IT = (
 
 
 SYSTEM_PROMPT = """Sei un medico italiano esperto che redige documentazione clinica realistica.
-Devi scrivere note cliniche in italiano professionale, usando lessico medico standard
-(anamnesi, esame obiettivo, diagnosi, terapia, decorso, dimissione).
 
 REGOLE TASSATIVE PER L'OUTPUT:
-- Restituisci SOLO testo semplice. Niente JSON, niente markdown, niente intestazioni con asterischi.
-- Quando devi inserire dati identificativi del paziente, usa esattamente questi
-  segnaposto letterali (con le parentesi quadre):
-    [PAZIENTE_NOME]      -> nome di battesimo del paziente
-    [PAZIENTE_COGNOME]   -> cognome del paziente
-    [DATA_NASCITA]       -> data di nascita del paziente
-    [LUOGO_RESIDENZA]    -> città / comune di residenza
-    [CF]                 -> codice fiscale del paziente
-    [TELEFONO]           -> numero di telefono di contatto
-- Inserisci i segnaposto in modo naturale all'interno della narrazione
-  (es. "Il paziente [PAZIENTE_NOME] [PAZIENTE_COGNOME], nato il [DATA_NASCITA]
-  e residente a [LUOGO_RESIDENZA], CF [CF], reperibile al numero [TELEFONO]...").
-- NON inventare nomi reali, date, codici fiscali o numeri telefonici: usa SEMPRE
-  i segnaposto sopra indicati per quei campi.
-- NON usare altri segnaposto, tag o parentesi quadre per qualunque altro contenuto.
-- Includi tutti e sei i segnaposto almeno una volta ciascuno nel testo.
-- Lunghezza tipica: 180-320 parole. Stile narrativo continuo, non elenco puntato rigido.
-- Varia struttura, sintomi, comorbidità, terapie e decorso da una nota all'altra.
+- Restituisci SOLO testo semplice. Niente JSON, niente markdown.
+- Usa esattamente questi segnaposto letterali: [PAZIENTE_NOME], [PAZIENTE_COGNOME], [DATA_NASCITA], [LUOGO_RESIDENZA], [CF], [TELEFONO], [MEDICO_NOME], [MEDICO_COGNOME], [PARENTE_NOME], [DATA_VISITA].
+- DIVIETO DI RAGGRUPPAMENTO: NON inserire tutti i segnaposto nella prima frase o nello stesso blocco.
+
+DISTRIBUZIONE NATURALE E CAOTICA (MOLTO IMPORTANTE):
+Spargi i dati in tutto il testo in modo imprevedibile.
+- [PAZIENTE_NOME], [PAZIENTE_COGNOME] e [DATA_NASCITA]: inseriscili nell'intestazione o nell'anamnesi.
+- Terze Parti (Parenti): Fai in modo che il paziente sia accompagnato o supportato da un familiare. Esempio: "Il paziente è giunto in PS accompagnato dal figlio [PARENTE_NOME]" oppure "La moglie [PARENTE_NOME] riferisce che...".
+- Terze Parti (Medici): Inserisci la firma o la menzione del medico curante. Esempio: "Si consiglia follow-up con il Dott. [MEDICO_NOME] [MEDICO_COGNOME]."
+- Date Mediche: Usa [DATA_VISITA] per indicare la data di ammissione, di un intervento o della dimissione (es. "Ricoverato in data [DATA_VISITA]").
+- [TELEFONO] e [CF]: NON metterli sempre in fondo al documento in un elenco ordinato. Nascondili nel testo.
+
+- Varia enormemente lo stile della nota.
+- Includi tutti i segnaposto almeno una volta.
 """
 
 
@@ -123,6 +125,7 @@ def build_user_prompt(iteration: int, rng: random.Random) -> str:
 def generate_fake_values(faker: Faker) -> Dict[str, str]:
     """One realistic value per placeholder, reused for every occurrence in the note."""
     dob = faker.date_of_birth(minimum_age=18, maximum_age=95)
+    visit_date = faker.date_between(start_date="-5y", end_date="today")
     return {
         "[PAZIENTE_NOME]": faker.first_name(),
         "[PAZIENTE_COGNOME]": faker.last_name(),
@@ -130,6 +133,10 @@ def generate_fake_values(faker: Faker) -> Dict[str, str]:
         "[LUOGO_RESIDENZA]": faker.city(),
         "[CF]": faker.ssn(),
         "[TELEFONO]": faker.phone_number(),
+        "[MEDICO_NOME]": faker.first_name(),
+        "[MEDICO_COGNOME]": faker.last_name(),
+        "[PARENTE_NOME]": faker.first_name(),
+        "[DATA_VISITA]": visit_date.strftime("%d/%m/%Y"),
     }
 
 
@@ -202,6 +209,7 @@ def call_gemini(client: genai.Client, user_prompt: str) -> str:
         config=genai_types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             temperature=TEMPERATURE,
+            http_options=genai_types.HttpOptions(timeout=60_000),
         ),
     )
     text = getattr(response, "text", None)
@@ -219,6 +227,7 @@ def generate_dataset(
     n_records: int,
     seed: int,
     max_retries: int,
+    resume_from: int = 0,
 ) -> None:
     api_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
     if not api_key:
@@ -232,9 +241,22 @@ def generate_dataset(
     rng = random.Random(seed)
 
     backup_path = output_path.with_name(f"{output_path.stem}_backup.json")
-    synthetic_records: List[Dict[str, Any]] = []
 
-    for i in range(1, n_records + 1):
+    # Load existing records when resuming.
+    synthetic_records: List[Dict[str, Any]] = []
+    if resume_from > 0 and output_path.exists():
+        synthetic_records = json.loads(output_path.read_text(encoding="utf-8"))
+        logger.info("Ripreso da record %s: caricati %s record esistenti.", resume_from, len(synthetic_records))
+    elif resume_from > 0 and backup_path.exists():
+        synthetic_records = json.loads(backup_path.read_text(encoding="utf-8"))
+        logger.info("Ripreso da backup: caricati %s record esistenti.", len(synthetic_records))
+
+    # Advance RNG state to stay consistent with original sequence.
+    for _ in range(resume_from):
+        rng.choice(SPECIALTIES_IT)
+        rng.choice(NOTE_TYPES_IT)
+
+    for i in range(resume_from + 1, n_records + 1):
         last_error: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
@@ -305,6 +327,12 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="Numero massimo di retry per record",
     )
+    parser.add_argument(
+        "--resume-from",
+        type=int,
+        default=0,
+        help="Riprendi la generazione a partire da questo numero di record già completati",
+    )
     return parser.parse_args()
 
 
@@ -315,6 +343,7 @@ def main() -> None:
         n_records=args.n_records,
         seed=args.seed,
         max_retries=args.max_retries,
+        resume_from=args.resume_from,
     )
 
 

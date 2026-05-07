@@ -1,0 +1,6 @@
+Model,Category,Precision,Recall,F1,True_Positives,False_Positives,False_Negatives
+gemma2:2b,Overall,1.0,0.9,0.9473684210526316,9,0,1
+gemma2:2b,NOME,1.0,1.0,1.0,5,0,0
+gemma2:2b,ETÀ,1.0,1.0,1.0,1,0,0
+gemma2:2b,LUOGO/INDIRIZZO,1.0,0.75,0.8571428571428571,3,0,1
+gemma2:2b,DATA,0,0,0,0,0,0

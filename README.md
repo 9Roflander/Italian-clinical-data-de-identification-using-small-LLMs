@@ -20,8 +20,11 @@ git clone https://github.com/yourusername/Italian-Clinical-Note-Deidentification
 cd Italian-Clinical-Note-Deidentification
 ```
 
-2. Install dependencies:
+2. Install dependencies (recommended inside a virtual environment):
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
