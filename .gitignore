@@ -1,95 +1,22 @@
-# Output files
-output.csv
+﻿# Model weights and checkpoints (too large for git)
+llama-3.2-3b-*/
+temp_merged*/
+cv_fold_outputs/
+models/
+checkpoint-*/
 
-output_*.txt
-
-# Sample input files
-sample_*.txt
-sample_*.csv
-sample_input/
-
-# Python artifacts
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
-venv/
-env/
-ENV/
+# Environments & caches
 .venv/
-.env/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
 
-# IDE files
-.idea/
-.vscode/
-*.sublime-workspace
-*.sublime-project
-.spyderproject
-.spyproject
-.ropeproject
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Logs
+# Logs and scratch
 *.log
-logs/
+output.txt
 
-# Model weights and checkpoints (if applicable)
-*.pt
-*.bin
-*.model
-*.pkl 
+# Duplicate data files
+data/synthetic_clinical_1000_backup.json
 
-# Charts
-charts/
-
-# Output report
-output_report.md
-
-# outputs
-outputs/
-
-
-#data
-data/
-
-#output files
-
-*.txt
-*.json
-*.jsonl
-*.jsonl.gz
-*.jsonl.gz.part
-*.jsonl.gz.part.
-
-#metrics
-metrics/
-
-*.pdf
-
-*plot*
+# Claude Code internal
+.claude/

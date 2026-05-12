@@ -1,124 +1,131 @@
-# Italian Clinical Note De-identification with LLMs
+# Italian Clinical Note De-Identification
 
-This repository contains a comprehensive toolkit for de-identifying Italian clinical notes using Large Language Models (LLMs) and evaluating the de-identification performance through both deterministic methods and LLM-based evaluation.
+## Project Overview
+A 3-phase fine-tuning pipeline on `meta-llama/Llama-3.2-3B` for GDPR-compliant de-identification of Italian clinical notes. The pipeline extracts Protected Health Information (PHI) entities — **NOME**, **ETÀ**, **DATA**, **LUOGO/INDIRIZZO** — and returns them as a structured JSON array.
 
-## Overview
+**Pipeline phases:**
+1. **CPT** — Continual Pre-Training on Italian medical text to adapt domain syntax
+2. **SFT** — Supervised Fine-Tuning with LoRA (4-bit NF4) to learn PHI extraction
+3. **CV Eval** — 5-Fold Cross-Validation over 80 gold-standard annotated notes
 
-The project implements a GDPR-compliant de-identification system for Italian clinical notes using various LLMs. It includes:
+---
 
-1. **De-identification System**: Uses LLMs to identify and mask sensitive information in clinical notes
-2. **Evaluation Framework**: Two evaluation approaches:
-   - Deterministic evaluation based on exact matching
-   - LLM-as-a-judge evaluation for more nuanced assessment
-3. **Analysis Tools**: Comprehensive tools for analyzing and visualizing de-identification performance
+## Hardware Requirements
 
-## Installation
+- **GPU:** NVIDIA RTX 4090 (24 GB VRAM) recommended. RTX 3090/4080 (16–24 GB) also works with the default batch size.
+- All training scripts use 4-bit NF4 quantization + LoRA, keeping peak VRAM under ~16 GB during SFT/CV phases.
 
-1. Clone the repository:
+---
+
+## Environment Setup
+
+**1. Clone the repository:**
 ```bash
-git clone https://github.com/yourusername/Italian-Clinical-Note-Deidentification.git
+git clone https://github.com/9Roflander/Italian-Clinical-Note-Deidentification.git
 cd Italian-Clinical-Note-Deidentification
 ```
 
-2. Install dependencies (recommended inside a virtual environment):
+**2. Create a virtual environment and install dependencies:**
 ```bash
 python -m venv .venv
+
+# Linux / macOS
 source .venv/bin/activate
-python -m pip install --upgrade pip
+
+# Windows
+.venv\Scripts\activate
+
 pip install -r requirements.txt
 ```
 
-3. Set up Ollama (for local LLM inference):
+> **Windows note:** Set `PYTHONUTF8=1` before running any script to avoid encoding errors with the TRL library:
+> ```powershell
+> $env:PYTHONUTF8 = "1"
+> ```
+
+**3. Authenticate with Hugging Face** (required for the gated Llama-3.2-3B model):
 ```bash
-# Follow instructions at https://ollama.ai to install Ollama
-# Pull required models:
-ollama pull gemma3:27b
-ollama pull mistral-small:24b
-ollama pull deepseek-r1:32b
+huggingface-cli login
 ```
+You need a Hugging Face account with access approved for `meta-llama/Llama-3.2-3B`.
 
-## Usage
+---
 
-### 1. De-identification
+## Data
 
-The main de-identification script (`deid.py`) processes clinical notes using LLMs:
+The `data/` directory contains all training and evaluation data — no additional downloads needed for local datasets:
+
+| File | Description |
+|---|---|
+| `data/synthetic_clinical_1000.json` | 1,000 synthetically generated EHRs with PHI annotations (training) |
+| `data/gold_standard_80.json` | 80 manually annotated clinical notes (evaluation gold standard) |
+
+Two external datasets are fetched automatically from Hugging Face at runtime:
+- **DART** corpus (Phase 1 CPT)
+- **NLP-FBK/synthetic-crf-train** (negative samples for SFT/CV)
+
+---
+
+## Execution Pipeline
+
+All scripts are run from the **project root directory**.
+
+### Phase 1: Continual Pre-Training (CPT)
+Adapts the base Llama-3.2-3B model to Italian medical syntax.
+```bash
+python src/train_cpt.py
+```
+Output: `./llama-3.2-3b-italian-medical-cpt/` (LoRA adapter)
+
+---
+
+### Phase 2: Supervised Fine-Tuning (SFT)
+Trains the CPT-adapted model to perform clinical de-identification.
+
+> Requires Phase 1 output at `./llama-3.2-3b-dart-sft/`.
+> If you skipped CPT, point `PHASE1_ADAPTER_DIR` in `src/train_phase2_sft.py` to your adapter path.
 
 ```bash
-python deid.py --input input_notes.jsonl --output deidentified_notes.jsonl --model gemma3:27b --backend ollama
+python src/train_phase2_sft.py
 ```
+Output: `./llama-3.2-3b-deid-sft/` (LoRA adapter)
 
-Key features:
-- Supports multiple LLM backends (Ollama, VLLM)
-- Configurable de-identification categories
-- Handles various sensitive information types (names, dates, locations, etc.)
-- Preserves medical information while removing PII
+---
 
-### 2. Evaluation
+### Phase 3: 5-Fold Cross-Validation
+Strict cross-validation against the 80 gold-standard annotations. Reports Precision, Recall, and F1.
 
-#### Deterministic Evaluation
+> Requires the Phase 1 merged model at `./temp_merged_phase1/`.
+> This directory is created automatically by Phase 2. If running CV standalone, run Phase 2 first or merge manually.
+
 ```bash
-python eval.py --input deidentified_notes.jsonl --gold_standard annotated_data.jsonl
+python src/train_evaluate_cv.py
+```
+Output: `./cv_fold_outputs/fold_N/` per fold, then averaged P/R/F1 printed to stdout.
+
+---
+
+## Output Directory Structure
+
+After running the full pipeline, the project root will contain:
+
+```
+Italian-Clinical-Note-Deidentification/
+├── llama-3.2-3b-italian-medical-cpt/   # Phase 1 CPT LoRA adapter
+├── llama-3.2-3b-dart-sft/              # Phase 1 DART SFT adapter (if separate)
+├── temp_merged_phase1/                  # Merged base + Phase 1 (auto-generated)
+├── llama-3.2-3b-deid-sft/              # Phase 2 SFT adapter
+├── cv_fold_outputs/                     # Phase 3 fold checkpoints
+└── data/                               # Training and evaluation data
 ```
 
-#### LLM-as-a-Judge Evaluation
-```bash
-python llm_as_a_judge.py --deidentified_data_path deidentified_notes.jsonl --model gemma3:27b --category NOME
-```
+---
 
-The LLM-as-a-judge evaluation:
-- Evaluates de-identification quality using another LLM
-- Categorizes results as True Positives (TP), False Positives (FP), or False Negatives (FN)
-- Supports evaluation of specific categories (NOME, ETÀ, LUOGO/INDIRIZZO, DATA)
+## Entity Types
 
-### 3. Analysis and Visualization
-
-Generate performance metrics and visualizations:
-```bash
-python compute_metrics.py --input evaluation_results.jsonl
-python create_boxplot.py --input metrics/
-```
-
-## Data Format
-
-### Input Format (JSONL)
-```json
-{
-    "input": "Original clinical note text",
-    "output": "De-identified clinical note text"
-}
-```
-
-### Evaluation Results Format
-```json
-{
-    "report_id": "1",
-    "annotations_gold": [
-        {"text": "Mario Rossi", "type": "NOME"}
-    ],
-    "annotations_deidentified": [
-        {"text": "[NOME]", "type": "NOME", "counted_as": "TP"}
-    ]
-}
-```
-
-## Project Structure
-
-- `deid.py`: Main de-identification script
-- `llm_as_a_judge.py`: LLM-based evaluation system
-- `eval.py`: Deterministic evaluation script
-- `compute_metrics.py`: Performance metrics computation
-- `create_boxplot.py`: Visualization generation
-- `plots.py`: Additional visualization utilities
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-[Your License Here]
-
-## Citation
-
-If you use this code in your research, please cite:
-[Your Citation Information]
+| Type | Description | Example |
+|---|---|---|
+| `NOME` | Patient or doctor names | *Maria Rossi* |
+| `ETÀ` | Age references | *45 anni* |
+| `DATA` | Dates and timestamps | *12 marzo 2023* |
+| `LUOGO/INDIRIZZO` | Locations and addresses | *Ospedale San Raffaele, Milano* |
