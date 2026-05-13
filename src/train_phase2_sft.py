@@ -129,21 +129,22 @@ def process_crf_dataset():
         })
     return Dataset.from_list(formatted_data)
 
-def assemble_dataset():
+def assemble_dataset(tokenizer):
     ds1 = process_synthetic_records("./data/synthetic_clinical_1000.json")
     ds2 = process_gold_standard("./data/gold_standard_80.json")
     ds3 = process_crf_dataset()
 
     combined_ds = concatenate_datasets([ds1, ds2, ds3])
 
-    def to_messages(example):
-        return {"messages": [
+    def apply_template(example):
+        msgs = [
             {"role": "system", "content": example["system"]},
             {"role": "user", "content": example["input"]},
-            {"role": "assistant", "content": example["output"]}
-        ]}
+            {"role": "assistant", "content": example["output"]},
+        ]
+        return {"text": tokenizer.apply_chat_template(msgs, tokenize=False)}
 
-    return combined_ds.map(to_messages, remove_columns=combined_ds.column_names)
+    return combined_ds.map(apply_template, remove_columns=combined_ds.column_names)
 
 # --- 3. Model & Training Setup ---
 def setup_and_train():
@@ -200,7 +201,7 @@ def setup_and_train():
     model = get_peft_model(model, lora_config)
     
     print("Preparing Dataset...")
-    full_dataset = assemble_dataset()
+    full_dataset = assemble_dataset(tokenizer)
 
     training_args = SFTConfig(
         output_dir=OUTPUT_DIR,
@@ -214,9 +215,8 @@ def setup_and_train():
         save_strategy="epoch",
         bf16=True,
         max_grad_norm=1.0,
-        dataset_text_field="messages",
+        dataset_text_field="text",
         max_length=2048,
-        assistant_only_loss=True,
     )
 
     print("Initializing SFTTrainer...")

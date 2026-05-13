@@ -87,19 +87,22 @@ def load_all_data():
     
     return gold, synth, crf
 
-def get_train_dataset(train_gold, synth, crf):
+def get_train_dataset(train_gold, synth, crf, tokenizer):
     gold_fmt = format_records(train_gold, has_indices=False)
     synth_fmt = format_records(synth, has_indices=True)
 
-    messages_data = [
-        {"messages": [
+    all_records = gold_fmt + synth_fmt + crf
+
+    def apply_template(ex):
+        msgs = [
             {"role": "system", "content": ex["system"]},
             {"role": "user", "content": ex["input"]},
-            {"role": "assistant", "content": ex["output"]}
-        ]}
-        for ex in gold_fmt + synth_fmt + crf
-    ]
-    return Dataset.from_list(messages_data)
+            {"role": "assistant", "content": ex["output"]},
+        ]
+        return {"text": tokenizer.apply_chat_template(msgs, tokenize=False)}
+
+    ds = Dataset.from_list(all_records)
+    return ds.map(apply_template, remove_columns=ds.column_names)
 
 # --- Model setup ---
 def prepare_base_merged_model():
@@ -155,8 +158,14 @@ def evaluate_fold(model, tokenizer, test_data):
     tp_total, fp_total, fn_total = 0, 0, 0
     
     for row in tqdm(test_data, desc="Evaluating Fold"):
-        text = row.get("text", "")
-        true_ents = [sanitize_type(e.get("type", "")) + ":" + e.get("text", "") for e in row.get("entities", []) if sanitize_type(e.get("type", ""))]
+        text = row.get("text", row.get("original_text", ""))
+        true_ents = []
+        for e in row.get("entities", []):
+            etype = sanitize_type(e.get("type", ""))
+            if not etype:
+                continue
+            snippet = extract_with_context_by_search(text, e.get("text", ""), padding=20)
+            true_ents.append(etype + ":" + snippet)
         
         msgs = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -166,7 +175,7 @@ def evaluate_fold(model, tokenizer, test_data):
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
         
         with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=512, temperature=0.0)
+            outputs = model.generate(**inputs, max_new_tokens=512, do_sample=False)
             
         gen_text = tokenizer.decode(outputs[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
         
@@ -211,14 +220,19 @@ def run_cv():
         test_gold = gold_arr[test_idx].tolist()
         
         model, tokenizer = get_model_and_tokenizer()
-        train_ds = get_train_dataset(train_gold, synth, crf)
+        train_ds = get_train_dataset(train_gold, synth, crf, tokenizer)
 
         out_dir = f"{OUTPUT_DIR_BASE}/fold_{fold+1}"
         args = SFTConfig(
-            output_dir=out_dir, per_device_train_batch_size=2, gradient_accumulation_steps=8,
+            output_dir=out_dir,
+            # --- batch / memory: use 1+16 on 12 GB (4070 Ti), 2+8 on 24 GB (4090) ---
+            per_device_train_batch_size=1,
+            gradient_accumulation_steps=16,
+            max_length=1024,
+            # ---
             learning_rate=5e-5, lr_scheduler_type="cosine", warmup_ratio=0.05, num_train_epochs=3,
             bf16=True, logging_steps=10, save_strategy="no",
-            dataset_text_field="messages", max_length=2048, assistant_only_loss=True
+            dataset_text_field="text",
         )
 
         trainer = SFTTrainer(
